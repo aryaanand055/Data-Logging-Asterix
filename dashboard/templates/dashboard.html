@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sensor Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --bg: #08111f;
+      --panel: rgba(10, 17, 30, 0.82);
+      --panel-strong: #0e1728;
+      --card: rgba(255, 255, 255, 0.04);
+      --ink: #e5eefc;
+      --muted: #91a4c7;
+      --line: rgba(148, 163, 184, 0.18);
+      --accent: #5eead4;
+      --accent-2: #60a5fa;
+      --warning: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(94, 234, 212, 0.18), transparent 30%),
+        radial-gradient(circle at top right, rgba(96, 165, 250, 0.18), transparent 28%),
+        linear-gradient(135deg, #050914 0%, #0a1322 40%, #09101b 100%);
+      min-height: 100vh;
+    }
+    .shell {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+    }
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 16px;
+      padding: 18px 20px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+      backdrop-filter: blur(18px);
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+    }
+    .title {
+      display: grid;
+      gap: 6px;
+    }
+    .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      font-size: 0.74rem;
+      color: var(--muted);
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(1.6rem, 3vw, 2.6rem);
+      line-height: 1.05;
+    }
+    .subtle {
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .status {
+      text-align: right;
+      color: var(--muted);
+      font-size: 0.95rem;
+      max-width: 48ch;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--panel);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+      overflow: hidden;
+    }
+    .panel-head {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .panel-head-main {
+      display: grid;
+      gap: 4px;
+    }
+    .panel-title {
+      font-weight: 700;
+      font-size: 1.05rem;
+    }
+    .panel-body {
+      padding: 14px;
+    }
+    .sensor-list {
+      display: grid;
+      gap: 12px;
+      max-height: calc(100vh - 220px);
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .sensor-card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+    .sensor-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+    .sensor-name {
+      font-weight: 700;
+      text-transform: capitalize;
+    }
+    .sensor-meta {
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+    .sensor-controls {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+    .control-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    select, button, input[type="checkbox"] {
+      accent-color: var(--accent);
+    }
+    select, button {
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.06);
+      color: var(--ink);
+      padding: 8px 10px;
+      font: inherit;
+      min-width: 140px;
+      font-size: 0.95rem;
+      outline: none;
+      z-index: 5;
+    }
+    .control-row .sensor-meta { min-width: 56px; }
+    .chart-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .chart-controls label {
+      color: var(--muted);
+      font-size: 0.84rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .export-btn {
+      background: rgba(96,165,250,0.12);
+      border: 1px solid rgba(96,165,250,0.22);
+      color: var(--accent-2);
+      padding: 8px 10px;
+    }
+    .export-btn:hover { background: rgba(96,165,250,0.2); }
+    .field-select {
+      flex: 1 1 180px;
+      min-width: 180px;
+    }
+    input[type="number"] {
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.06);
+      color: var(--ink);
+      padding: 8px 10px;
+      font: inherit;
+      width: 96px;
+      font-size: 0.95rem;
+      outline: none;
+    }
+    button {
+      cursor: pointer;
+      transition: transform 0.15s ease, background 0.15s ease;
+    }
+    button:hover { transform: translateY(-1px); background: rgba(255,255,255,0.1); }
+    .chart-panel {
+      min-height: 720px;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+    .chart-wrap {
+      padding: 12px 16px 18px;
+      min-height: 640px;
+    }
+    .chart-shell {
+      height: 640px;
+      position: relative;
+    }
+    .legend-note {
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(94, 234, 212, 0.12);
+      color: #bff7ee;
+      font-size: 0.82rem;
+      border: 1px solid rgba(94, 234, 212, 0.22);
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 14px rgba(94, 234, 212, 0.6);
+    }
+    @media (max-width: 1080px) {
+      .grid { grid-template-columns: 1fr; }
+      .sensor-list { max-height: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="hero">
+      <div class="title">
+        <div class="eyebrow">Shared sensor view</div>
+        <h1>Multi-sensor graph dashboard</h1>
+        <div class="subtle">One SQLite database, one graph sheet, toggles per sensor, and live field selection per feed.</div>
+      </div>
+      <div class="status" id="status">Loading sensor inventory...</div>
+    </div>
+
+    <div class="grid">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Sensors</div>
+            <div class="legend-note">Enable or hide any sensor, then choose which numeric field to plot.</div>
+          </div>
+          <button id="refreshBtn" type="button">Refresh</button>
+        </div>
+        <div class="panel-body">
+          <div class="sensor-list" id="sensorList"></div>
+        </div>
+      </section>
+
+      <section class="panel chart-panel">
+        <div class="panel-head">
+          <div class="panel-head-main">
+            <div class="panel-title">Recent samples</div>
+            <div class="legend-note">Each line uses the selected sensor field over a rolling time window in the shared database.</div>
+          </div>
+          <div class="chart-controls">
+            <label for="timeWindowSeconds">Window
+              <input id="timeWindowSeconds" type="number" min="5" max="3600" step="1" value="30" />
+              s
+            </label>
+            <div class="badge"><span class="dot"></span><span id="dbPathLabel"></span></div>
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <div class="chart-shell">
+            <canvas id="chart"></canvas>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const chartCtx = document.getElementById('chart').getContext('2d');
+    const statusEl = document.getElementById('status');
+    const sensorListEl = document.getElementById('sensorList');
+    const dbPathLabel = document.getElementById('dbPathLabel');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const timeWindowSecondsEl = document.getElementById('timeWindowSeconds');
+
+    const palette = ['#5eead4', '#60a5fa', '#f59e0b', '#f472b6', '#a78bfa', '#34d399', '#fb7185', '#c084fc'];
+    const sensorMeta = new Map();
+    let refreshGeneration = 0;
+    let refreshLoopHandle = null;
+
+    const chart = new Chart(chartCtx, {
+      type: 'line',
+      data: { labels: [], datasets: [] },
+      options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        elements: { point: { radius: 0 } },
+        plugins: {
+          legend: {
+            labels: { color: '#e5eefc' }
+          }
+        },
+        scales: {
+          x: {
+            ticks: {
+              color: '#91a4c7',
+              maxRotation: 0,
+              autoSkip: true,
+              callback: (value, index) => {
+                const label = chart.data.labels?.[index] ?? value;
+                if (!label) {
+                  return '';
+                }
+                const date = new Date(label);
+                if (Number.isNaN(date.getTime())) {
+                  return label;
+                }
+                return date.toLocaleTimeString([], { hour12: false });
+              }
+            },
+            grid: { color: 'rgba(148,163,184,0.08)' }
+          },
+          y: { ticks: { color: '#91a4c7' }, grid: { color: 'rgba(148,163,184,0.08)' } }
+        }
+      }
+    });
+
+    function sensorCardTemplate(sensor, index) {
+      const checked = true;
+      const options = sensor.fields.length
+        ? [
+            '<option value="__all__">All data</option>',
+            ...sensor.fields.map((field) => `<option value="${field}" ${field === sensor.primary_field ? 'selected' : ''}>${field}</option>`),
+          ].join('')
+        : '<option value="">No numeric fields</option>';
+      return `
+        <div class="sensor-card" data-sensor="${sensor.sensor_name}">
+          <div class="sensor-top">
+            <label class="sensor-name">
+              <input type="checkbox" class="sensor-toggle" ${checked ? 'checked' : ''} />
+              ${sensor.sensor_name}
+            </label>
+            <div class="sensor-meta">${sensor.row_count} rows</div>
+          </div>
+          <div class="sensor-controls">
+            <div class="control-row">
+              <span class="sensor-meta">Field</span>
+              <select class="field-select">${options}</select>
+              <button class="export-btn" data-sensor="${sensor.sensor_name}" title="Download sensor rows as CSV">CSV</button>
+            </div>
+            <div class="control-row">
+              <span class="sensor-meta">Latest</span>
+              <span class="latest-value" style="font-weight:700; color:${palette[index % palette.length]}">waiting...</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function padSeries(points, length) {
+      const values = points.map((point) => point.value);
+      const padding = Array(Math.max(0, length - values.length)).fill(null);
+      return padding.concat(values);
+    }
+
+    function buildAllFieldSeries(sensor, rows) {
+      const numericFields = sensor.fields && sensor.fields.length
+        ? sensor.fields
+        : Array.from(new Set(
+            rows.flatMap((row) => Object.entries(row.payload || {}))
+              .filter(([, value]) => !Number.isNaN(Number(value)))
+              .map(([key]) => key)
+          ));
+
+      return numericFields.map((field) => {
+        const points = rows
+          .map((row) => ({
+            timestamp: row.timestamp,
+            value: Number(row.payload?.[field]),
+          }))
+          .filter((point) => Number.isFinite(point.value));
+
+        return {
+          label: `${sensor.sensor_name} · ${field}`,
+          points,
+        };
+      });
+    }
+
+    function selectedWindowSeconds() {
+      const parsed = Number.parseInt(timeWindowSecondsEl.value, 10);
+      if (!Number.isFinite(parsed)) {
+        return 30;
+      }
+      return Math.min(3600, Math.max(5, parsed));
+    }
+
+    function formatSeriesLabel(timestamp) {
+      const date = new Date(timestamp);
+      if (Number.isNaN(date.getTime())) {
+        return timestamp;
+      }
+      return date.toLocaleTimeString([], { hour12: false });
+    }
+
+    function getSelections() {
+      return Array.from(sensorListEl.querySelectorAll('.sensor-card')).map((card) => ({
+        sensor: card.dataset.sensor,
+        enabled: card.querySelector('.sensor-toggle').checked,
+        field: card.querySelector('.field-select').value,
+      }));
+    }
+
+    async function renderSensors() {
+      const response = await fetch('/api/sensors?limit=50', { cache: 'no-store' });
+      const payload = await response.json();
+      if (!payload.ok) {
+        statusEl.textContent = 'No sensor tables are available yet.';
+        sensorListEl.innerHTML = '';
+        dbPathLabel.textContent = payload.db_path || 'no database';
+        return [];
+      }
+
+      dbPathLabel.textContent = payload.db_path;
+      sensorMeta.clear();
+      sensorListEl.innerHTML = payload.sensors.map(sensorCardTemplate).join('');
+
+      if (!payload.sensors.length) {
+        statusEl.textContent = 'No sensor tables are present yet. Start a logger to populate the shared database.';
+        return [];
+      }
+
+      payload.sensors.forEach((sensor, index) => {
+        const card = sensorListEl.querySelector(`[data-sensor="${sensor.sensor_name}"]`);
+        sensorMeta.set(sensor.sensor_name, sensor);
+        const toggle = card.querySelector('.sensor-toggle');
+        const select = card.querySelector('.field-select');
+        const latest = card.querySelector('.latest-value');
+        const exportBtn = card.querySelector('.export-btn');
+
+        if (sensor.latest && sensor.latest.payload) {
+          const field = sensor.primary_field || sensor.fields[0];
+          const value = sensor.latest.payload[field];
+          latest.textContent = value === undefined ? 'n/a' : `${value}`;
+        } else {
+          latest.textContent = 'n/a';
+        }
+
+        toggle.addEventListener('change', refreshChart);
+        select.addEventListener('change', refreshChart);
+        if (exportBtn) {
+          exportBtn.addEventListener('click', (ev) => {
+            const s = ev.currentTarget.dataset.sensor;
+            const url = `/api/all/${encodeURIComponent(s)}?format=csv&limit=all`;
+            window.open(url, '_blank');
+          });
+        }
+        latest.style.textShadow = `0 0 10px ${palette[index % palette.length]}33`;
+      });
+
+      return payload.sensors;
+    }
+
+    async function refreshLatestCards() {
+      const sensors = Array.from(sensorMeta.keys());
+      if (!sensors.length) {
+        return;
+      }
+
+      const latestSamples = await Promise.all(
+        sensors.map(async (sensorName) => {
+          try {
+            const response = await fetch(`/api/latest/${encodeURIComponent(sensorName)}`, { cache: 'no-store' });
+            const payload = await response.json();
+            return [sensorName, payload.ok ? payload.latest : null];
+          } catch (error) {
+            console.error(error);
+            return [sensorName, null];
+          }
+        })
+      );
+
+      latestSamples.forEach(([sensorName, latest]) => {
+        const card = sensorListEl.querySelector(`[data-sensor="${sensorName}"]`);
+        if (!card) {
+          return;
+        }
+
+        const sensor = sensorMeta.get(sensorName);
+        const latestEl = card.querySelector('.latest-value');
+        if (!latestEl || !sensor) {
+          return;
+        }
+
+        if (!latest || !latest.payload) {
+          latestEl.textContent = 'n/a';
+          return;
+        }
+
+        const field = sensor.primary_field || sensor.fields[0];
+        const value = latest.payload[field];
+        latestEl.textContent = value === undefined ? 'n/a' : `${value}`;
+      });
+    }
+
+    async function refreshChart() {
+      const generation = ++refreshGeneration;
+      const windowSeconds = selectedWindowSeconds();
+      const selections = getSelections().filter((item) => item.enabled && item.field);
+      if (!selections.length) {
+        chart.data.labels = [];
+        chart.data.datasets = [];
+        chart.update();
+        statusEl.textContent = 'Enable one or more sensors to draw the chart.';
+        return;
+      }
+
+      statusEl.textContent = `Plotting ${selections.length} sensor selection(s) over the last ${windowSeconds}s...`;
+      const seriesGroups = await Promise.all(
+        selections.map(async ({ sensor, field }) => {
+          if (generation !== refreshGeneration) {
+            return [];
+          }
+          if (field === '__all__') {
+            const response = await fetch(`/api/all/${encodeURIComponent(sensor)}?format=json&seconds=${windowSeconds}`, { cache: 'no-store' });
+            const payload = await response.json();
+            const rows = payload.rows || [];
+            const meta = sensorMeta.get(sensor) || { sensor_name: sensor, fields: [] };
+            return buildAllFieldSeries(meta, rows);
+          }
+
+          const response = await fetch(`/api/series/${encodeURIComponent(sensor)}?field=${encodeURIComponent(field)}&seconds=${windowSeconds}`, { cache: 'no-store' });
+          const payload = await response.json();
+          return [{
+            label: `${sensor} · ${field}`,
+            points: payload.points || [],
+          }];
+        })
+      );
+
+      if (generation !== refreshGeneration) {
+        return;
+      }
+
+      const seriesList = seriesGroups.flat();
+      const labels = Array.from(
+        new Set(seriesList.flatMap((series) => series.points.map((point) => point.timestamp)))
+      ).sort();
+      const datasets = seriesList.map((series, index) => ({
+        label: series.label,
+        data: labels.map((timestamp) => {
+          const match = series.points.find((point) => point.timestamp === timestamp);
+          return match ? match.value : null;
+        }),
+        borderColor: palette[index % palette.length],
+        backgroundColor: palette[index % palette.length],
+        tension: 0.18,
+      }));
+
+      chart.data.labels = labels;
+      chart.data.datasets = datasets;
+      chart.update();
+      statusEl.textContent = `Loaded ${datasets.length} plotted line(s) over the last ${windowSeconds}s.`;
+    }
+
+    function startReactiveRefresh() {
+      if (refreshLoopHandle) {
+        clearTimeout(refreshLoopHandle);
+      }
+
+      const tick = async () => {
+        try {
+          await Promise.all([refreshLatestCards(), refreshChart()]);
+        } finally {
+          refreshLoopHandle = setTimeout(tick, 1000);
+        }
+      };
+
+      tick().catch((error) => {
+        console.error(error);
+        statusEl.textContent = 'Failed to load dashboard data.';
+      });
+    }
+
+    refreshBtn.addEventListener('click', async () => {
+      await renderSensors();
+      startReactiveRefresh();
+    });
+
+    timeWindowSecondsEl.addEventListener('change', () => {
+      refreshGeneration += 1;
+      refreshChart().catch((error) => {
+        console.error(error);
+        statusEl.textContent = 'Failed to load dashboard data.';
+      });
+    });
+
+    (async () => {
+      await renderSensors();
+      startReactiveRefresh();
+    })().catch((error) => {
+      console.error(error);
+      statusEl.textContent = 'Failed to load dashboard data.';
+    });
+  </script>
+</body>
+</html>
