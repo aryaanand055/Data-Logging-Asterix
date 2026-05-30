@@ -6,13 +6,27 @@ the host, where `vehicle_controls/arduino_serial_reader.py` reads it and
 
 ```
 arduino/
-└── vehicle_telemetry/
-    └── vehicle_telemetry.ino   # open this folder in the Arduino IDE
+├── vehicle_telemetry/
+│   └── vehicle_telemetry.ino             # REAL sensors (hall + 2 pots)
+└── vehicle_telemetry_simulator/
+    └── vehicle_telemetry_simulator.ino   # FAKE data, no sensors wired
 ```
 
 > The Arduino IDE requires a sketch's `.ino` to live in a folder of the **same
-> name** — that's why the sketch is in `vehicle_telemetry/`, not directly in
+> name** — that's why each sketch is in its own subfolder, not directly in
 > `arduino/`.
+
+## Which sketch?
+
+| Sketch | Use when |
+| --- | --- |
+| `vehicle_telemetry/` | You have the real hall-effect speed sensor and two potentiometers wired up. |
+| `vehicle_telemetry_simulator/` | You want to test the host pipeline/dashboard with **any** Arduino and **no sensors** — it streams plausible fake data. |
+
+Both print the **identical line format**, so the host side
+(`arduino_serial_reader.py`, `./launch_all.sh --arduino`) works the same with
+either. The simulator is the firmware equivalent of the host-side
+`vehicle_controls/vehicle_simulator.py`.
 
 ## What it does
 
