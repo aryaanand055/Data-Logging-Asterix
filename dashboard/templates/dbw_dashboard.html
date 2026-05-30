@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Asterix · Drive-by-Wire Telemetry</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --bg-0: #050a14;
+      --bg-1: #0a1322;
+      --panel: rgba(13, 22, 38, 0.78);
+      --panel-2: rgba(255, 255, 255, 0.025);
+      --ink: #eaf2ff;
+      --muted: #8ea2c6;
+      --faint: #5d6f93;
+      --line: rgba(126, 148, 184, 0.16);
+      --brand: #5eead4;
+      --brand-2: #38bdf8;
+      --speed: #5eead4;
+      --accel: #60a5fa;
+      --brake: #fb7185;
+      --steer: #f0abfc;
+      --distance: #f59e0b;
+      --heading: #a78bfa;
+      --lateral: #34d399;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      min-height: 100vh;
+      color: var(--ink);
+      font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+      background:
+        radial-gradient(circle at 12% -5%, rgba(94, 234, 212, 0.14), transparent 30%),
+        radial-gradient(circle at 88% -8%, rgba(56, 189, 248, 0.16), transparent 32%),
+        radial-gradient(circle at 50% 120%, rgba(167, 139, 250, 0.10), transparent 40%),
+        linear-gradient(160deg, var(--bg-0) 0%, var(--bg-1) 55%, #070d18 100%);
+      background-attachment: fixed;
+    }
+    .shell {
+      max-width: 1680px;
+      margin: 0 auto;
+      padding: 24px clamp(16px, 3vw, 40px) 56px;
+      display: grid;
+      gap: 20px;
+    }
+
+    /* ---------- Header ---------- */
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+      padding: 18px 22px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015));
+      backdrop-filter: blur(20px);
+      box-shadow: 0 20px 50px rgba(0,0,0,0.40);
+    }
+    .brand { display: flex; align-items: center; gap: 16px; }
+    .mark {
+      width: 52px; height: 52px;
+      display: grid; place-items: center;
+      border-radius: 16px;
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 2rem; font-weight: 700; line-height: 1;
+      color: #04140f;
+      background: linear-gradient(135deg, var(--brand), var(--brand-2));
+      box-shadow: 0 8px 26px rgba(56, 189, 248, 0.45), inset 0 0 12px rgba(255,255,255,0.35);
+    }
+    .brand-text { display: grid; gap: 2px; }
+    .brand-name {
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 700;
+      font-size: 1.5rem;
+      letter-spacing: 0.04em;
+    }
+    .brand-name .accent {
+      background: linear-gradient(135deg, var(--brand), var(--brand-2));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .brand-sub {
+      text-transform: uppercase;
+      letter-spacing: 0.26em;
+      font-size: 0.68rem;
+      color: var(--faint);
+    }
+    .topbar-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 9px;
+      padding: 9px 14px; border-radius: 999px;
+      background: rgba(94, 234, 212, 0.10);
+      border: 1px solid rgba(94, 234, 212, 0.22);
+      color: #c8fff6; font-size: 0.82rem; font-weight: 500;
+    }
+    .pill.db { background: rgba(255,255,255,0.04); border-color: var(--line); color: var(--muted); max-width: 360px; }
+    .pill.db span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 12px rgba(94,234,212,0.7); }
+    .dot.off { background: #ff6b6b; box-shadow: 0 0 10px rgba(255,107,107,0.5); }
+    .clock { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.86rem; }
+
+    .button {
+      border: 1px solid var(--line); border-radius: 12px;
+      padding: 10px 14px; color: var(--ink);
+      background: rgba(255,255,255,0.05); font: inherit; font-size: 0.88rem;
+      cursor: pointer; transition: transform .15s ease, background .15s ease, border-color .15s ease;
+    }
+    .button:hover { transform: translateY(-1px); background: rgba(255,255,255,0.1); border-color: rgba(94,234,212,0.4); }
+    .button.primary {
+      background: linear-gradient(135deg, rgba(94,234,212,0.22), rgba(56,189,248,0.22));
+      border-color: rgba(94,234,212,0.4); color: #d6fff8; font-weight: 600;
+    }
+
+    /* ---------- Sensor strip ---------- */
+    .sensorbar {
+      display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+      padding: 12px 18px; border: 1px solid var(--line); border-radius: 18px;
+      background: var(--panel); backdrop-filter: blur(14px);
+    }
+    .sensorbar .label { color: var(--faint); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.18em; margin-right: 4px; }
+    .sensor-indicator {
+      display: inline-flex; gap: 8px; align-items: center;
+      padding: 6px 11px; border-radius: 10px;
+      background: rgba(255,255,255,0.03); border: 1px solid var(--line);
+      font-size: 0.82rem; font-weight: 600; text-transform: capitalize;
+    }
+
+    /* ---------- KPI tiles ---------- */
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 14px;
+    }
+    .kpi {
+      border: 1px solid var(--line); border-radius: 18px;
+      padding: 16px 18px; background: var(--panel);
+      backdrop-filter: blur(14px); position: relative; overflow: hidden;
+    }
+    .kpi::before {
+      content: ''; position: absolute; inset: 0 auto 0 0; width: 4px;
+      background: var(--accent, var(--brand));
+    }
+    .kpi .kpi-label { color: var(--muted); font-size: 0.78rem; letter-spacing: 0.04em; }
+    .kpi .kpi-value {
+      margin-top: 8px; font-family: 'Space Grotesk', sans-serif;
+      font-size: 1.85rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums;
+    }
+    .kpi .kpi-unit { font-size: 0.9rem; color: var(--muted); font-weight: 500; margin-left: 4px; }
+
+    /* ---------- Toolbar ---------- */
+    .toolbar {
+      display: flex; gap: 14px; align-items: end; justify-content: space-between; flex-wrap: wrap;
+      padding: 14px 18px; border: 1px solid var(--line); border-radius: 18px;
+      background: var(--panel); backdrop-filter: blur(14px);
+    }
+    .status { color: var(--muted); font-size: 0.9rem; min-height: 1.3em; }
+    .range-controls { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+    .field-group { display: grid; gap: 6px; }
+    .field-group label { color: var(--faint); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.12em; }
+    .field-group input {
+      border: 1px solid var(--line); border-radius: 11px;
+      background: rgba(255,255,255,0.05); color: var(--ink);
+      padding: 9px 11px; font: inherit; min-width: 210px;
+    }
+    .field-group input:focus { outline: none; border-color: rgba(94,234,212,0.5); }
+
+    /* ---------- Chart grid ---------- */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+    .card {
+      border: 1px solid var(--line); border-radius: 20px;
+      background: var(--panel); backdrop-filter: blur(16px);
+      box-shadow: 0 16px 40px rgba(0,0,0,0.30);
+      display: grid; grid-template-rows: auto 1fr; overflow: hidden;
+      min-height: 360px;
+    }
+    .card.wide { grid-column: 1 / -1; }
+    .card-head {
+      padding: 16px 20px; border-bottom: 1px solid var(--line);
+      display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    }
+    .card-title { font-weight: 700; font-size: 1.02rem; display: flex; align-items: center; gap: 10px; }
+    .swatch { width: 10px; height: 10px; border-radius: 3px; box-shadow: 0 0 10px currentColor; }
+    .card-subtitle { color: var(--faint); font-size: 0.82rem; margin-top: 3px; }
+    .card-body { padding: 14px 16px 18px; background: var(--panel-2); }
+    .chart-shell { position: relative; height: 300px; }
+    .card.wide .chart-shell { height: 340px; }
+
+    footer { text-align: center; color: var(--faint); font-size: 0.8rem; padding-top: 8px; }
+    footer .accent { color: var(--brand); }
+
+    @media (max-width: 1080px) {
+      .grid { grid-template-columns: 1fr; }
+      .card.wide { grid-column: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <!-- Header -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark">&lowast;</div>
+        <div class="brand-text">
+          <div class="brand-name">Team <span class="accent">Asterix</span></div>
+          <div class="brand-sub">Drive-by-Wire Telemetry</div>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <span class="clock" id="clock"></span>
+        <span class="pill"><span class="dot" id="liveDot"></span><span id="liveLabel">Live</span></span>
+        <span class="pill db"><span class="dot"></span><span id="dbPathLabel">Loading database…</span></span>
+        <button class="button primary" id="refreshBtn" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <!-- Sensor health strip -->
+    <div class="sensorbar">
+      <span class="label">Sensors</span>
+      <div id="sensorIndicators" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;"></div>
+    </div>
+
+    <!-- Live KPIs -->
+    <section class="kpis" id="kpis">
+      <div class="kpi" style="--accent:var(--speed)"><div class="kpi-label">Speed</div><div class="kpi-value"><span id="kpiSpeed">—</span><span class="kpi-unit">km/h</span></div></div>
+      <div class="kpi" style="--accent:var(--steer)"><div class="kpi-label">Steering</div><div class="kpi-value"><span id="kpiSteer">—</span><span class="kpi-unit">°</span></div></div>
+      <div class="kpi" style="--accent:var(--brake)"><div class="kpi-label">Brake</div><div class="kpi-value"><span id="kpiBrake">—</span><span class="kpi-unit">%</span></div></div>
+      <div class="kpi" style="--accent:var(--heading)"><div class="kpi-label">Heading</div><div class="kpi-value"><span id="kpiHeading">—</span><span class="kpi-unit">°</span></div></div>
+      <div class="kpi" style="--accent:var(--accel)"><div class="kpi-label">Long. accel</div><div class="kpi-value"><span id="kpiAccel">—</span><span class="kpi-unit">g</span></div></div>
+      <div class="kpi" style="--accent:var(--lateral)"><div class="kpi-label">Lateral accel</div><div class="kpi-value"><span id="kpiLateral">—</span><span class="kpi-unit">g</span></div></div>
+      <div class="kpi" style="--accent:var(--distance)"><div class="kpi-label">Distance</div><div class="kpi-value"><span id="kpiDistance">—</span><span class="kpi-unit">m</span></div></div>
+    </section>
+
+    <!-- Range + status -->
+    <section class="toolbar">
+      <div class="status" id="status">Loading telemetry…</div>
+      <div class="range-controls">
+        <div class="field-group">
+          <label for="startTime">Start</label>
+          <input id="startTime" type="datetime-local" />
+        </div>
+        <div class="field-group">
+          <label for="endTime">End</label>
+          <input id="endTime" type="datetime-local" />
+        </div>
+        <button class="button" id="applyRangeBtn" type="button">Apply range</button>
+      </div>
+    </section>
+
+    <!-- Charts -->
+    <section class="grid">
+      <article class="card wide">
+        <div class="card-head">
+          <div>
+            <div class="card-title"><span class="swatch" style="background:var(--speed);color:var(--speed)"></span>Speed vs Time</div>
+            <div class="card-subtitle" id="speedMeta"></div>
+          </div>
+        </div>
+        <div class="card-body"><div class="chart-shell"><canvas id="speedChart"></canvas></div></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title"><span class="swatch" style="background:var(--brake);color:var(--brake)"></span>Brake Position vs Time</div>
+            <div class="card-subtitle" id="brakeMeta"></div>
+          </div>
+        </div>
+        <div class="card-body"><div class="chart-shell"><canvas id="brakeChart"></canvas></div></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title"><span class="swatch" style="background:var(--steer);color:var(--steer)"></span>Steering Angle vs Time</div>
+            <div class="card-subtitle" id="steeringMeta"></div>
+          </div>
+        </div>
+        <div class="card-body"><div class="chart-shell"><canvas id="steeringChart"></canvas></div></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title"><span class="swatch" style="background:var(--accel);color:var(--accel)"></span>Longitudinal Acceleration</div>
+            <div class="card-subtitle" id="accelMeta"></div>
+          </div>
+        </div>
+        <div class="card-body"><div class="chart-shell"><canvas id="accelChart"></canvas></div></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title"><span class="swatch" style="background:var(--lateral);color:var(--lateral)"></span>Lateral Acceleration</div>
+            <div class="card-subtitle" id="lateralMeta"></div>
+          </div>
+        </div>
+        <div class="card-body"><div class="chart-shell"><canvas id="lateralChart"></canvas></div></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title"><span class="swatch" style="background:var(--heading);color:var(--heading)"></span>Heading (Yaw) vs Time</div>
+            <div class="card-subtitle" id="headingMeta"></div>
+          </div>
+        </div>
+        <div class="card-body"><div class="chart-shell"><canvas id="headingChart"></canvas></div></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title"><span class="swatch" style="background:var(--distance);color:var(--distance)"></span>Distance Travelled</div>
+            <div class="card-subtitle" id="distanceMeta"></div>
+          </div>
+        </div>
+        <div class="card-body"><div class="chart-shell"><canvas id="distanceChart"></canvas></div></div>
+      </article>
+    </section>
+
+    <footer>Team <span class="accent">Asterix</span> · all plots are built from the shared SQLite telemetry store.</footer>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const dbPathLabel = document.getElementById('dbPathLabel');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const startTimeEl = document.getElementById('startTime');
+    const endTimeEl = document.getElementById('endTime');
+    const applyRangeBtn = document.getElementById('applyRangeBtn');
+
+    const palette = {
+      speed: '#5eead4', accel: '#60a5fa', brake: '#fb7185',
+      steering: '#f0abfc', distance: '#f59e0b', heading: '#a78bfa', lateral: '#34d399',
+    };
+
+    function hexToRgba(hex, alpha) {
+      const v = hex.replace('#', '');
+      const r = parseInt(v.slice(0, 2), 16);
+      const g = parseInt(v.slice(2, 4), 16);
+      const b = parseInt(v.slice(4, 6), 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    function makeLineChart(canvasId, color, yLabel) {
+      const ctx = document.getElementById(canvasId).getContext('2d');
+      let chart;
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: { labels: [], datasets: [] },
+        options: {
+          animation: false,
+          responsive: true,
+          maintainAspectRatio: false,
+          elements: { point: { radius: 0 }, line: { borderWidth: 2 } },
+          plugins: {
+            legend: { display: false },
+            tooltip: { mode: 'index', intersect: false },
+          },
+          scales: {
+            x: {
+              ticks: {
+                color: '#8ea2c6', maxRotation: 0, autoSkip: true, maxTicksLimit: 8,
+                callback: (value, index) => {
+                  const ts = chart?.data?.labels?.[index] ?? value;
+                  if (!ts) return '';
+                  const parsed = new Date(ts);
+                  return Number.isNaN(parsed.getTime()) ? ts : parsed.toLocaleTimeString([], { hour12: false });
+                },
+              },
+              grid: { color: 'rgba(126,148,184,0.07)' },
+            },
+            y: {
+              title: { display: true, text: yLabel, color: '#8ea2c6' },
+              ticks: { color: '#8ea2c6' },
+              grid: { color: 'rgba(126,148,184,0.07)' },
+            },
+          },
+        },
+      });
+      return chart;
+    }
+
+    const speedChart = makeLineChart('speedChart', palette.speed, 'Speed (km/h)');
+    const brakeChart = makeLineChart('brakeChart', palette.brake, 'Brake (%)');
+    const steeringChart = makeLineChart('steeringChart', palette.steering, 'Angle (°)');
+    const accelChart = makeLineChart('accelChart', palette.accel, 'Acceleration (g)');
+    const lateralChart = makeLineChart('lateralChart', palette.lateral, 'Lateral (g)');
+    const headingChart = makeLineChart('headingChart', palette.heading, 'Heading (°)');
+    const distanceChart = makeLineChart('distanceChart', palette.distance, 'Distance (m)');
+
+    function setLineChart(chart, points, color, label) {
+      chart.data.labels = points.map((p) => p.timestamp);
+      chart.data.datasets = points.length
+        ? [{
+            label,
+            data: points.map((p) => p.value),
+            borderColor: color,
+            backgroundColor: hexToRgba(color, 0.12),
+            fill: true,
+            tension: 0.22,
+          }]
+        : [];
+      chart.update();
+    }
+
+    function lastValue(points) {
+      return (points && points.length) ? points[points.length - 1].value : null;
+    }
+
+    function fmt(value, digits) {
+      return (value === null || value === undefined || Number.isNaN(value)) ? '—' : Number(value).toFixed(digits);
+    }
+
+    function speedToMps(value, field) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return null;
+      return (field && field.toLowerCase().includes('kph')) ? n * (1000.0 / 3600.0) : n;
+    }
+
+    function computeDistanceFromSpeedPoints(points, field) {
+      if (!points || !points.length) return [];
+      let cum = 0.0, prev = null;
+      const out = [];
+      for (const p of points) {
+        const t = Date.parse(p.timestamp);
+        if (Number.isNaN(t)) continue;
+        const v = speedToMps(p.value, field);
+        if (v === null) continue;
+        if (prev) {
+          const dt = (t - prev.t) / 1000.0;
+          if (dt > 0) cum += ((v + prev.v) / 2.0) * dt;
+        }
+        out.push({ timestamp: p.timestamp, value: cum });
+        prev = { t, v };
+      }
+      return out;
+    }
+
+    function metaText(field, rows) {
+      return (field ? `field “${field}”` : 'no numeric data') + ` · ${rows || 0} rows`;
+    }
+
+    function toLocalInputValue(date) {
+      const local = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
+      return local.toISOString().slice(0, 16);
+    }
+    function inputValueToIso(value) {
+      if (!value) return null;
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+    }
+    function defaultRangeInputs() {
+      const end = new Date();
+      const start = new Date(end.getTime() - (5 * 60 * 1000));
+      startTimeEl.value = toLocalInputValue(start);
+      endTimeEl.value = toLocalInputValue(end);
+    }
+    function currentRangeParams() {
+      return { start: inputValueToIso(startTimeEl.value), end: inputValueToIso(endTimeEl.value) };
+    }
+
+    async function loadDbwDashboard() {
+      statusEl.textContent = 'Loading telemetry…';
+      const params = currentRangeParams();
+      const query = new URLSearchParams();
+      if (params.start) query.set('start', params.start);
+      if (params.end) query.set('end', params.end);
+
+      let payload;
+      try {
+        const response = await fetch(`/api/dbw?${query.toString()}`, { cache: 'no-store' });
+        payload = await response.json();
+      } catch (e) {
+        statusEl.textContent = 'Unable to reach the telemetry API.';
+        return;
+      }
+      if (!payload.ok) { statusEl.textContent = 'Unable to load telemetry from the database.'; return; }
+
+      dbPathLabel.textContent = payload.db_path || 'no database';
+
+      const speed = payload.speed || { points: [] };
+      const accel = payload.acceleration || { points: [] };
+      const brake = payload.brake || { points: [] };
+      const steering = payload.steering || { points: [] };
+      const lateral = payload.lateral || { points: [] };
+      const heading = payload.heading || { points: [] };
+      const distanceSeries = payload.distance || { points: [] };
+      const range = payload.range || {};
+
+      const distancePoints = (distanceSeries.points && distanceSeries.points.length)
+        ? distanceSeries.points
+        : computeDistanceFromSpeedPoints(speed.points || [], speed.field || '');
+
+      setLineChart(speedChart, speed.points || [], palette.speed, 'Speed');
+      setLineChart(brakeChart, brake.points || [], palette.brake, 'Brake');
+      setLineChart(steeringChart, steering.points || [], palette.steering, 'Steering');
+      setLineChart(accelChart, accel.points || [], palette.accel, 'Acceleration');
+      setLineChart(lateralChart, lateral.points || [], palette.lateral, 'Lateral');
+      setLineChart(headingChart, heading.points || [], palette.heading, 'Heading');
+      setLineChart(distanceChart, distancePoints || [], palette.distance, 'Distance');
+
+      document.getElementById('speedMeta').textContent = metaText(speed.field, speed.rows);
+      document.getElementById('brakeMeta').textContent = metaText(brake.field, brake.rows);
+      document.getElementById('steeringMeta').textContent = metaText(steering.field, steering.rows);
+      document.getElementById('accelMeta').textContent = metaText(accel.field, accel.rows) + ' · from IMU';
+      document.getElementById('lateralMeta').textContent = metaText(lateral.field, lateral.rows) + ' · from IMU';
+      document.getElementById('headingMeta').textContent = metaText(heading.field, heading.rows) + ' · from IMU';
+      const totalDistance = distancePoints.length ? distancePoints[distancePoints.length - 1].value : 0;
+      document.getElementById('distanceMeta').textContent =
+        `integrated from ${distanceSeries.field || speed.field || 'speed'} · ${totalDistance.toFixed(2)} m total`;
+
+      // KPI tiles (latest sample in range)
+      document.getElementById('kpiSpeed').textContent = fmt(lastValue(speed.points), 1);
+      document.getElementById('kpiSteer').textContent = fmt(lastValue(steering.points), 1);
+      document.getElementById('kpiBrake').textContent = fmt(lastValue(brake.points), 1);
+      document.getElementById('kpiHeading').textContent = fmt(lastValue(heading.points), 1);
+      document.getElementById('kpiAccel').textContent = fmt(lastValue(accel.points), 3);
+      document.getElementById('kpiLateral').textContent = fmt(lastValue(lateral.points), 3);
+      document.getElementById('kpiDistance').textContent = fmt(totalDistance, 1);
+
+      statusEl.textContent = (range.start && range.end)
+        ? `Showing ${range.start} → ${range.end}`
+        : 'Telemetry loaded.';
+    }
+
+    function refresh() {
+      loadDbwDashboard().catch((error) => {
+        console.error(error);
+        statusEl.textContent = 'Failed to load telemetry.';
+      });
+    }
+    refreshBtn.addEventListener('click', refresh);
+    applyRangeBtn.addEventListener('click', refresh);
+
+    // Live clock
+    function tickClock() {
+      document.getElementById('clock').textContent = new Date().toLocaleTimeString([], { hour12: false });
+    }
+    tickClock();
+    setInterval(tickClock, 1000);
+
+    defaultRangeInputs();
+    refresh();
+
+    // Sensor online/offline indicators
+    const sensorIndicatorsEl = document.getElementById('sensorIndicators');
+    async function loadSensorIndicators() {
+      try {
+        const res = await fetch('/api/sensors?limit=50', { cache: 'no-store' });
+        const payload = await res.json();
+        if (!payload.ok) return;
+        const now = Date.now();
+        const thresholdMs = 10000;
+        let anyOnline = false;
+        sensorIndicatorsEl.innerHTML = payload.sensors.map((s) => {
+          const latestTs = s.latest && s.latest.timestamp ? Date.parse(s.latest.timestamp) : 0;
+          const online = latestTs && (now - latestTs) <= thresholdMs;
+          if (online) anyOnline = true;
+          return `<div class="sensor-indicator" title="${s.sensor_name} · ${s.row_count} rows">
+            <span class="dot ${online ? '' : 'off'}"></span>
+            <span style="color:${online ? 'var(--ink)' : 'var(--faint)'}">${s.sensor_name}</span></div>`;
+        }).join('');
+        const liveDot = document.getElementById('liveDot');
+        const liveLabel = document.getElementById('liveLabel');
+        liveDot.classList.toggle('off', !anyOnline);
+        liveLabel.textContent = anyOnline ? 'Live' : 'Idle';
+      } catch (e) {
+        console.error('Failed loading sensor indicators', e);
+      }
+    }
+    loadSensorIndicators();
+    setInterval(loadSensorIndicators, 5000);
+  </script>
+</body>
+</html>

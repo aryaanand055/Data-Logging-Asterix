@@ -1,7 +1,8 @@
 # Throttle
 
-This folder is reserved for the throttle sensor/logger entrypoint.
+Deprecated. This folder was replaced by separate sensor pipelines:
 
-- Shared database: `sensor_data.db` at the repo root
-- Target table: `sensor_throttle`
-- Dashboard: `dashboard/server.py`
+- `hall_effect_speed/` for wheel-speed data
+- `hall_effect_steering/` for steering-pot data
+
+Use the scripts in those folders instead of the old throttle pipeline.

@@ -1,0 +1,17 @@
+nohup: ignoring input
+Traceback (most recent call last):
+  File "/home/abaja/Documents/imu_sqlite/hall_effect_speed/speed_db_uploader.py", line 92, in <module>
+    main()
+  File "/home/abaja/Documents/imu_sqlite/hall_effect_speed/speed_db_uploader.py", line 77, in main
+    db_logger.log_reading(
+  File "/home/abaja/Documents/imu_sqlite/imu/sensor_sqlite_logger.py", line 95, in log_reading
+    conn.execute(
+sqlite3.OperationalError: database is locked
+Traceback (most recent call last):
+  File "/home/abaja/Documents/imu_sqlite/hall_effect_speed/speed_simulator.py", line 66, in <module>
+    main()
+  File "/home/abaja/Documents/imu_sqlite/hall_effect_speed/speed_simulator.py", line 59, in main
+    print(json.dumps(sample, separators=(',', ':'), ensure_ascii=True), flush=True)
+BrokenPipeError: [Errno 32] Broken pipe
+Exception ignored in: <_io.TextIOWrapper name='<stdout>' mode='w' encoding='utf-8'>
+BrokenPipeError: [Errno 32] Broken pipe

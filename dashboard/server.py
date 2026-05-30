@@ -29,10 +29,10 @@ app = Flask(__name__, template_folder=str(TEMPLATE_DIR))
 PREFERRED_FIELDS: dict[str, list[str]] = {
     'imu': ['roll_deg', 'yaw_deg', 'pitch_deg', 'temperature_c'],
     'radar': ['distance_m', 'range_m', 'speed_mps', 'velocity_mps'],
+    'hall_effect_speed': ['speed_kph', 'speed_mps', 'velocity_kph'],
     'hall_effect_steering': ['angle_deg', 'steering_angle_deg', 'position_deg'],
     'actuator': ['position_mm', 'position_pct', 'current_a'],
-    'brake': ['pressure_bar', 'position_pct', 'force_n'],
-    'throttle': ['position_pct', 'pedal_pct', 'angle_deg'],
+    'brake': ['brake_pct', 'position_pct', 'pressure_bar', 'force_n', 'voltage_v'],
     'stm': ['value'],
 }
 
@@ -155,6 +155,77 @@ def load_rows_since(sensor_name: str, seconds: int) -> list[dict[str, object]]:
     return result
 
 
+def load_rows_between(sensor_name: str, start: datetime, end: datetime) -> list[dict[str, object]]:
+    table = table_name(sensor_name)
+    if not DB_PATH.exists():
+        return []
+
+    with open_db() as conn:
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT recorded_at, source_id, payload_json
+                FROM {table}
+                WHERE recorded_at >= ? AND recorded_at <= ?
+                ORDER BY id ASC
+                """,
+                (
+                    start.isoformat(timespec='seconds').replace('+00:00', 'Z'),
+                    end.isoformat(timespec='seconds').replace('+00:00', 'Z'),
+                ),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+    result: list[dict[str, object]] = []
+    for row in rows:
+        try:
+            payload = json.loads(row['payload_json'])
+        except json.JSONDecodeError:
+            payload = {'raw': row['payload_json']}
+        result.append(
+            {
+                'timestamp': row['recorded_at'],
+                'source_id': row['source_id'],
+                'payload': payload,
+            }
+        )
+    return result
+
+
+def load_all_rows(sensor_name: str) -> list[dict[str, object]]:
+    table = table_name(sensor_name)
+    if not DB_PATH.exists():
+        return []
+
+    with open_db() as conn:
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT recorded_at, source_id, payload_json
+                FROM {table}
+                ORDER BY id ASC
+                """
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+    result: list[dict[str, object]] = []
+    for row in rows:
+        try:
+            payload = json.loads(row['payload_json'])
+        except json.JSONDecodeError:
+            payload = {'raw': row['payload_json']}
+        result.append(
+            {
+                'timestamp': row['recorded_at'],
+                'source_id': row['source_id'],
+                'payload': payload,
+            }
+        )
+    return result
+
+
 def collect_numeric_fields(rows: Iterable[dict[str, object]]) -> list[str]:
     fields: set[str] = set()
     for row in rows:
@@ -173,6 +244,243 @@ def choose_primary_field(sensor_name: str, fields: list[str]) -> str | None:
         if candidate in fields:
             return candidate
     return fields[0] if fields else None
+
+
+def choose_field_from_candidates(fields: list[str], candidates: list[str]) -> str | None:
+    for candidate in candidates:
+        if candidate in fields:
+            return candidate
+    return None
+
+
+def parse_timestamp(timestamp: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+
+
+def parse_request_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return parse_timestamp(value)
+
+
+def resolve_dbw_range(start_param: str | None, end_param: str | None) -> tuple[datetime, datetime]:
+    now = datetime.now(timezone.utc)
+    end = parse_request_timestamp(end_param) or now
+    start = parse_request_timestamp(start_param) or (end - timedelta(minutes=5))
+    if start > end:
+        start, end = end, start
+    return start, end
+
+
+def speed_value_in_mps(value: float, field_name: str) -> float:
+    if field_name.lower().endswith('_kph'):
+        return value * (1000.0 / 3600.0)
+    return value
+
+
+def build_numeric_points(rows: list[dict[str, object]], field_name: str) -> list[dict[str, object]]:
+    points: list[dict[str, object]] = []
+    for row in rows:
+        payload = row.get('payload', {})
+        if not isinstance(payload, dict):
+            continue
+        value = as_float(payload.get(field_name))
+        if value is None:
+            continue
+        points.append({'timestamp': row['timestamp'], 'value': value})
+    return points
+
+
+def derive_acceleration_points(speed_points: list[dict[str, object]], speed_field: str) -> list[dict[str, object]]:
+    timed_samples: list[tuple[datetime, str, float]] = []
+    for point in speed_points:
+        timestamp = point.get('timestamp')
+        value = as_float(point.get('value'))
+        if not isinstance(timestamp, str) or value is None:
+            continue
+        parsed_timestamp = parse_timestamp(timestamp)
+        if parsed_timestamp is None:
+            continue
+        timed_samples.append((parsed_timestamp, timestamp, speed_value_in_mps(value, speed_field)))
+
+    timed_samples.sort(key=lambda sample: sample[0])
+    acceleration_points: list[dict[str, object]] = []
+    previous_sample: tuple[datetime, str, float] | None = None
+
+    for sample in timed_samples:
+        if previous_sample is None:
+            previous_sample = sample
+            continue
+        delta_seconds = (sample[0] - previous_sample[0]).total_seconds()
+        if delta_seconds <= 0:
+            previous_sample = sample
+            continue
+        acceleration_points.append(
+            {
+                'timestamp': sample[1],
+                'value': (sample[2] - previous_sample[2]) / delta_seconds,
+            }
+        )
+        previous_sample = sample
+
+    return acceleration_points
+
+
+def derive_distance_points(speed_points: list[dict[str, object]], speed_field: str) -> list[dict[str, object]]:
+    timed_samples: list[tuple[datetime, str, float]] = []
+    for point in speed_points:
+        timestamp = point.get('timestamp')
+        value = as_float(point.get('value'))
+        if not isinstance(timestamp, str) or value is None:
+            continue
+        parsed_timestamp = parse_timestamp(timestamp)
+        if parsed_timestamp is None:
+            continue
+        timed_samples.append((parsed_timestamp, timestamp, speed_value_in_mps(value, speed_field)))
+
+    timed_samples.sort(key=lambda sample: sample[0])
+    distance_points: list[dict[str, object]] = []
+    previous_sample: tuple[datetime, str, float] | None = None
+    cumulative_distance = 0.0
+
+    for sample in timed_samples:
+        if previous_sample is not None:
+            delta_seconds = (sample[0] - previous_sample[0]).total_seconds()
+            if delta_seconds > 0:
+                cumulative_distance += ((sample[2] + previous_sample[2]) / 2.0) * delta_seconds
+        distance_points.append({'timestamp': sample[1], 'value': cumulative_distance})
+        previous_sample = sample
+
+    return distance_points
+
+
+def build_scatter_points(
+    rows: list[dict[str, object]],
+    x_field: str,
+    y_field: str,
+    convert_y_to_mps: bool = False,
+) -> list[dict[str, object]]:
+    points: list[dict[str, object]] = []
+    for row in rows:
+        payload = row.get('payload', {})
+        if not isinstance(payload, dict):
+            continue
+        x_value = as_float(payload.get(x_field))
+        y_value = as_float(payload.get(y_field))
+        if x_value is None or y_value is None:
+            continue
+        if convert_y_to_mps:
+            y_value = speed_value_in_mps(y_value, y_field)
+        points.append({'timestamp': row['timestamp'], 'x': x_value, 'y': y_value})
+    return points
+
+
+def build_dbw_dashboard_data() -> dict[str, object]:
+    start_param = request.args.get('start')
+    end_param = request.args.get('end')
+    start, end = resolve_dbw_range(start_param, end_param)
+
+    speed_rows = load_rows_between('hall_effect_speed', start, end)
+    speed_fields = collect_numeric_fields(speed_rows)
+    speed_field = choose_primary_field('hall_effect_speed', speed_fields)
+    speed_points = build_numeric_points(speed_rows, speed_field) if speed_field else []
+
+    steering_rows = load_rows_between('hall_effect_steering', start, end)
+    steering_fields = collect_numeric_fields(steering_rows)
+    steering_field = choose_primary_field('hall_effect_steering', steering_fields)
+    steering_points = build_numeric_points(steering_rows, steering_field) if steering_field else []
+
+    distance_points = derive_distance_points(speed_points, speed_field) if speed_field else []
+
+    radar_rows = load_rows_between('radar', start, end)
+    radar_fields = collect_numeric_fields(radar_rows)
+    radar_distance_field = choose_field_from_candidates(radar_fields, ['distance_m', 'range_m'])
+    radar_speed_field = choose_field_from_candidates(radar_fields, ['speed_mps', 'velocity_mps', 'speed_kph', 'velocity_kph'])
+    radar_scatter_points: list[dict[str, object]] = []
+    if radar_distance_field and radar_speed_field:
+        radar_scatter_points = build_scatter_points(
+            radar_rows,
+            radar_distance_field,
+            radar_speed_field,
+            convert_y_to_mps=True,
+        )
+
+    imu_rows = load_rows_between('imu', start, end)
+    imu_fields = collect_numeric_fields(imu_rows)
+    acceleration_field = choose_field_from_candidates(imu_fields, ['ax_g', 'ax', 'accel_g', 'acceleration_g'])
+    acceleration_points = build_numeric_points(imu_rows, acceleration_field) if acceleration_field else []
+
+    lateral_field = choose_field_from_candidates(imu_fields, ['ay_g', 'ay', 'lateral_g'])
+    lateral_points = build_numeric_points(imu_rows, lateral_field) if lateral_field else []
+
+    heading_field = choose_field_from_candidates(imu_fields, ['yaw_deg', 'heading_deg', 'yaw'])
+    heading_points = build_numeric_points(imu_rows, heading_field) if heading_field else []
+
+    brake_rows = load_rows_between('brake', start, end)
+    brake_fields = collect_numeric_fields(brake_rows)
+    brake_field = choose_primary_field('brake', brake_fields)
+    brake_points = build_numeric_points(brake_rows, brake_field) if brake_field else []
+
+    return {
+        'db_path': str(DB_PATH),
+        'range': {
+            'start': start.isoformat(timespec='seconds').replace('+00:00', 'Z'),
+            'end': end.isoformat(timespec='seconds').replace('+00:00', 'Z'),
+            'default_minutes': 5,
+        },
+        'speed': {
+            'sensor_name': 'hall_effect_speed',
+            'field': speed_field,
+            'rows': len(speed_rows),
+            'points': speed_points,
+        },
+        'acceleration': {
+            'sensor_name': 'imu',
+            'field': acceleration_field,
+            'rows': len(imu_rows),
+            'points': acceleration_points,
+        },
+        'distance': {
+            'sensor_name': 'hall_effect_speed',
+            'field': speed_field,
+            'rows': len(speed_rows),
+            'points': distance_points,
+        },
+        'speed_distance': {
+            'sensor_name': 'radar',
+            'distance_field': radar_distance_field,
+            'speed_field': radar_speed_field,
+            'rows': len(radar_rows),
+            'points': radar_scatter_points,
+        },
+        'steering': {
+            'sensor_name': 'hall_effect_steering',
+            'field': steering_field,
+            'rows': len(steering_rows),
+            'points': steering_points,
+        },
+        'brake': {
+            'sensor_name': 'brake',
+            'field': brake_field,
+            'rows': len(brake_rows),
+            'points': brake_points,
+        },
+        'lateral': {
+            'sensor_name': 'imu',
+            'field': lateral_field,
+            'rows': len(imu_rows),
+            'points': lateral_points,
+        },
+        'heading': {
+            'sensor_name': 'imu',
+            'field': heading_field,
+            'rows': len(imu_rows),
+            'points': heading_points,
+        },
+    }
 
 
 def latest_payload(sensor_name: str) -> dict[str, object] | None:
@@ -235,6 +543,11 @@ def index() -> str:
     return render_template('dashboard.html')
 
 
+@app.get('/dbw')
+def dbw_index() -> str:
+    return render_template('dbw_dashboard.html')
+
+
 @app.get('/api/sensors')
 def api_sensors():
     try:
@@ -259,6 +572,14 @@ def api_sensors():
             }
         )
     resp = jsonify({'ok': True, 'db_path': str(DB_PATH), 'sensors': sensors})
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
+
+
+@app.get('/api/dbw')
+def api_dbw():
+    data = build_dbw_dashboard_data()
+    resp = jsonify({'ok': True, **data})
     resp.headers['Cache-Control'] = 'no-store'
     return resp
 

@@ -1,94 +1,128 @@
-# Multi-sensor logging and dashboard
+# Asterix — Multi-Sensor Logging & Drive-by-Wire Dashboard
 
-This repository collects sensor data from multiple sources (IMU, STM serial, radar, hall-effect steering, actuator, brake, throttle) into one shared SQLite database and exposes a Python-served dashboard for visualization.
+A vehicle telemetry stack for **Team Asterix**. It collects data from several
+sensors — IMU, an STM microcontroller, and an Arduino streaming speed, steering,
+and brake — into a single shared SQLite database, and serves a live Chart.js
+dashboard for visualising it.
 
-This documentation covers the repository layout, quick start, how to add new sensors, the shared database schema, and troubleshooting notes.
+Every sensor follows the same shape: a **source** (real hardware reader or a
+simulator) emits one JSON sample per line, which is piped into an **uploader**
+that writes it to `sensor_data.db`. The Flask **dashboard** reads that database
+and plots it.
+
+```
+   sources (hardware / simulators)        uploaders            store            UI
+ ┌──────────────────────────────┐   ┌────────────────────┐  ┌──────────┐  ┌──────────────┐
+ │ HWT605 IMU  (binary serial)  │──▶│ (built-in logger)  │─▶│          │  │  /     multi │
+ │ STM        (text serial)     │──▶│ (built-in logger)  │─▶│ sensor_  │─▶│        sensor│
+ │ Arduino    (speed/steer/brake)──▶│ vehicle_db_uploader│─▶│ data.db  │─▶│  /dbw  Asterix│
+ │ simulators (no hardware)     │──▶│ *_db_uploader.py   │─▶│ (SQLite) │  │        DBW    │
+ └──────────────────────────────┘   └────────────────────┘  └──────────┘  └──────────────┘
+```
+
+---
 
 ## Quick start
 
-Prerequisites: Python 3.10+, install dependencies:
+Requires **Python 3.10+**.
 
 ```bash
 cd /home/abaja/Documents/imu_sqlite
-python3 -m pip install -r requirements.txt
+python3 -m pip install -r requirements.txt   # Flask + pyserial
+
+# Start everything with one command (dashboard + IMU + STM + speed/steering/brake)
+./launch_all.sh
+
+# Open the dashboards
+#   http://localhost:5050/        multi-sensor explorer
+#   http://localhost:5050/dbw     Asterix drive-by-wire telemetry
+
+./launch_all.sh --status          # what's running
+./launch_all.sh --stop            # stop everything it started
 ```
 
-Start everything (dashboard + IMU + STM logger):
+By default the speed/steering/brake channels are **simulated** so the dashboard
+fills with data even without hardware attached. To read them from a real
+Arduino instead:
 
 ```bash
-cd /home/abaja/Documents/imu_sqlite
-./launch_all.sh --start
+./launch_all.sh --arduino
 ```
 
-Check status:
+---
 
-```bash
-./launch_all.sh --status
-```
+## What's in the box
 
-Stop services:
+| Sensor | Source script | Table | Key fields |
+| --- | --- | --- | --- |
+| IMU (WIT HWT605) | `imu/hwt605_sqlite_logger.py` | `sensor_imu` | `roll_deg`, `pitch_deg`, `yaw_deg`, `ax_g`, `ay_g`, `az_g`, `gx_dps`…, `temperature_c` |
+| STM board | `stm_serial_sqlite_logger.py` | `sensor_stm` | flexible (`raw`, parsed `data`) |
+| Wheel speed | `hall_effect_speed/` + `vehicle_controls/` | `sensor_hall_effect_speed` | `speed_kph` |
+| Steering | `hall_effect_steering/` + `vehicle_controls/` | `sensor_hall_effect_steering` | `angle_deg` |
+| Brake pot | `vehicle_controls/` | `sensor_brake` | `brake_pct`, `position_pct`, `voltage_v` |
 
-```bash
-./launch_all.sh --stop
-```
+The **Arduino** path (`vehicle_controls/`) streams speed, steering, and brake
+from one device and fans them into the three tables above. See
+[vehicle_controls/README.md](vehicle_controls/README.md).
 
-Or run only the dashboard for local browsing:
+---
 
-```bash
-cd /home/abaja/Documents/imu_sqlite
-python3 dashboard/server.py
-# then open http://<host>:5050
-```
+## Documentation
+
+| Guide | Contents |
+| --- | --- |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data flow, the shared database schema, table/field reference. |
+| [docs/RUNNING.md](docs/RUNNING.md) | Every launch command and flag, the individual pipelines, and how to run pieces by hand. |
+| [docs/DASHBOARD.md](docs/DASHBOARD.md) | The two dashboards, the KPI/graph catalogue, and the full HTTP API reference. |
+| [docs/SENSOR_GUIDE.md](docs/SENSOR_GUIDE.md) | Step-by-step: add a brand-new sensor to the stack. |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Serial-port contention, empty charts, dashboard issues, and recovery steps. |
+| [vehicle_controls/README.md](vehicle_controls/README.md) | The host-side Arduino speed/steering/brake reader, uploader, and simulator. |
+| [arduino/README.md](arduino/README.md) | The Arduino firmware: wiring, calibration, output format, and flashing. |
+
+---
 
 ## Repository layout
 
-- `sensor_data.db` — the shared SQLite database at the repository root.
-- `launch_all.sh` — helper to start/stop/dashboard and sensor loggers.
-- `dashboard/` — Flask app and templates for the multi-sensor dashboard.
-- `imu/` — IMU logger, UI, and watchdog.
-- `stm_serial_sqlite_logger.py` — STM serial logger (root-level helper).
-- `radar/`, `hall_effect_steering/`, `actuator/`, `brake/`, `throttle/` — sensor scaffolds.
+```
+imu_sqlite/
+├── launch_all.sh              # one command to start/stop/status everything
+├── launch_vehicle_sensors.sh  # speed/steering/brake pipelines only
+├── project_paths.py           # SHARED_DB_PATH = <repo>/sensor_data.db
+├── sensor_sqlite_logger.py    # re-exports imu.sensor_sqlite_logger
+├── stm_serial_sqlite_logger.py
+├── sensor_data.db             # the shared SQLite store (git-ignored content)
+├── requirements.txt           # Flask, pyserial
+│
+├── dashboard/
+│   ├── server.py              # Flask app + JSON API (port 5050)
+│   └── templates/
+│       ├── dashboard.html     # "/"    multi-sensor explorer
+│       └── dbw_dashboard.html # "/dbw" Asterix drive-by-wire dashboard
+│
+├── imu/
+│   ├── sensor_sqlite_logger.py  # SensorSQLiteLogger (the real implementation)
+│   ├── hwt605_sqlite_logger.py  # HWT605 binary-serial → SQLite
+│   ├── hwt605_logger.py, hwt605_ui.py
+│   └── imu_watchdog.sh          # re-binds the USB tty and respawns the logger
+│
+├── hall_effect_speed/         # speed_simulator.py + speed_db_uploader.py
+├── hall_effect_steering/      # steering_simulator.py + steering_db_uploader.py
+├── vehicle_controls/          # host: arduino_serial_reader.py, vehicle_db_uploader.py, vehicle_simulator.py
+├── arduino/                   # device: vehicle_telemetry.ino firmware
+│
+├── radar/  actuator/  brake/  throttle/   # scaffolds / notes
+└── docs/                      # this documentation set
+```
 
-## Shared database and schema
+---
 
-All sensors write to a single SQLite database file at the repository root. The `SensorSQLiteLogger` helper (see `imu/sensor_sqlite_logger.py`) provides a consistent API. Key points:
+## Conventions
 
-- One table per sensor: `sensor_<sanitized_name>` (e.g. `sensor_imu`, `sensor_radar`).
-- Table columns:
-  - `id INTEGER PRIMARY KEY AUTOINCREMENT`
-  - `recorded_at TEXT NOT NULL` (ISO 8601 UTC)
-  - `source_id TEXT` (optional device identifier)
-  - `payload_json TEXT NOT NULL` (JSON-encoded payload)
+- **One table per sensor**, named `sensor_<sanitized_name>`.
+- Every reading stores `recorded_at` (ISO-8601 UTC), an optional `source_id`,
+  and a JSON `payload_json` blob — so sensors can add fields freely without
+  schema migrations.
+- The dashboard auto-discovers tables and plots any **numeric** payload field.
+- All timestamps are **UTC**; the dashboard converts to local time for display.
 
-Use `SensorSQLiteLogger.log_reading(sensor_name, data, source_id, timestamp)` to insert a reading. The dashboard reads these tables and extracts numeric fields for plotting.
-
-## Adding a new sensor
-
-1. Create a folder under the repository root (e.g. `radar/`).
-2. Add a Python entrypoint (e.g. `radar/logger.py`) that:
-   - Instantiates `SensorSQLiteLogger` pointing at the shared DB (defaults to `sensor_data.db`).
-   - Normalizes the incoming payload into a simple dict of fields and calls `log_reading()`.
-3. Make the logger accept command-line options `--db-path`, `--sensor-name`, `--source-id`, and transport-specific options.
-4. Add a README in the folder describing the transport/protocol and any wiring.
-5. Optionally add the logger to `launch_all.sh`.
-
-A minimal logger example is provided in `docs/SENSOR_GUIDE.md`.
-
-## Dashboard
-
-The dashboard is a Flask app at `dashboard/server.py` serving a Chart.js-based UI (`dashboard/templates/dashboard.html`). It exposes two APIs:
-
-- `GET /api/sensors` — lists available sensor tables and numeric fields.
-- `GET /api/series/<sensor_name>?field=...&limit=...` — returns recent numeric series for a sensor field.
-
-The dashboard pulls numeric fields from each sensor's `payload_json` and allows toggling multiple series onto a single graph.
-
-## Troubleshooting
-
-- If you see the CH340 USB device in `lsusb` but no `/dev/ttyUSB*` node, the host kernel may lack the `ch341` driver. The IMU runbook (`imu/README.md`) includes recovery steps for the Jetson image used here.
-- The IMU watchdog previously hardcoded `/dev/ttyUSB0`; some machines require `--auto-port` or `--port` with the correct device path.
-
-## Next steps
-
-- Implement the radar logger (CAN) and the other sensors' loggers according to their transports.
-- Add unit tests and CI to validate DB writes and dashboard APIs.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full schema and rationale.

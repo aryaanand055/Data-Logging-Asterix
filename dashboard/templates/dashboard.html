@@ -58,6 +58,15 @@
       font-size: 0.74rem;
       color: var(--muted);
     }
+    .brand-mark {
+      width: 48px; height: 48px; flex: none;
+      display: grid; place-items: center;
+      border-radius: 14px;
+      font-size: 1.9rem; font-weight: 700; line-height: 1;
+      color: #04140f;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      box-shadow: 0 8px 24px rgba(96, 165, 250, 0.4), inset 0 0 12px rgba(255,255,255,0.35);
+    }
     h1 {
       margin: 0;
       font-size: clamp(1.6rem, 3vw, 2.6rem);
@@ -238,6 +247,8 @@
       background: var(--accent);
       box-shadow: 0 0 14px rgba(94, 234, 212, 0.6);
     }
+    .dot.off { background: #ff6b6b; box-shadow: 0 0 10px rgba(255,107,107,0.45); }
+    .sensor-indicator { display:inline-flex; gap:8px; align-items:center; padding:4px 8px; border-radius:8px; background: rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.02); }
     @media (max-width: 1080px) {
       .grid { grid-template-columns: 1fr; }
       .sensor-list { max-height: none; }
@@ -247,10 +258,13 @@
 <body>
   <div class="shell">
     <div class="hero">
-      <div class="title">
-        <div class="eyebrow">Shared sensor view</div>
-        <h1>Multi-sensor graph dashboard</h1>
-        <div class="subtle">One SQLite database, one graph sheet, toggles per sensor, and live field selection per feed.</div>
+      <div class="title" style="display:flex;align-items:center;gap:16px;">
+        <div class="brand-mark">&lowast;</div>
+        <div style="display:grid;gap:4px;">
+          <div class="eyebrow">Team Asterix · Shared sensor view</div>
+          <h1>Multi-sensor graph dashboard</h1>
+          <div class="subtle">One SQLite database, one graph sheet, toggles per sensor, and live field selection per feed. <a href="/dbw" style="color:var(--accent);text-decoration:none;font-weight:600;">Open DBW telemetry →</a></div>
+        </div>
       </div>
       <div class="status" id="status">Loading sensor inventory...</div>
     </div>
@@ -358,7 +372,10 @@
               <input type="checkbox" class="sensor-toggle" ${checked ? 'checked' : ''} />
               ${sensor.sensor_name}
             </label>
-            <div class="sensor-meta">${sensor.row_count} rows</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div class="sensor-indicator"><span class="dot sensor-dot"></span></div>
+              <div class="sensor-meta">${sensor.row_count} rows</div>
+            </div>
           </div>
           <div class="sensor-controls">
             <div class="control-row">
@@ -463,6 +480,17 @@
         } else {
           latest.textContent = 'n/a';
         }
+        // set online/offline dot based on recency (10s threshold)
+        const dot = card.querySelector('.sensor-dot');
+        try {
+          const latestTs = sensor.latest && sensor.latest.timestamp ? Date.parse(sensor.latest.timestamp) : 0;
+          const online = latestTs && (Date.now() - latestTs) <= 10000;
+          if (dot) {
+            dot.classList.toggle('off', !online);
+          }
+        } catch (e) {
+          if (dot) dot.classList.add('off');
+        }
 
         toggle.addEventListener('change', refreshChart);
         select.addEventListener('change', refreshChart);
@@ -510,14 +538,23 @@
           return;
         }
 
+        const dot = card.querySelector('.sensor-dot');
         if (!latest || !latest.payload) {
           latestEl.textContent = 'n/a';
+          if (dot) dot.classList.add('off');
           return;
         }
 
         const field = sensor.primary_field || sensor.fields[0];
         const value = latest.payload[field];
         latestEl.textContent = value === undefined ? 'n/a' : `${value}`;
+        try {
+          const latestTs = latest.timestamp ? Date.parse(latest.timestamp) : 0;
+          const online = latestTs && (Date.now() - latestTs) <= 10000;
+          if (dot) dot.classList.toggle('off', !online);
+        } catch (e) {
+          if (dot) dot.classList.add('off');
+        }
       });
     }
 

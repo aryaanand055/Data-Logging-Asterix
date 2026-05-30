@@ -60,7 +60,14 @@ def has_hwt605_frames(port: str, baud: int, probe_seconds: float = 1.5) -> bool:
     end_t = time.time() + probe_seconds
     try:
         while time.time() < end_t:
-            chunk = ser.read(256)
+            try:
+                chunk = ser.read(256)
+            except Exception:
+                # Transient read error while probing (e.g. the port briefly
+                # reports readiness but returns no data, or another process is
+                # contending for it). Treat this port as "not ready" rather
+                # than letting the exception crash the whole logger.
+                return False
             if not chunk:
                 continue
             buf.extend(chunk)
